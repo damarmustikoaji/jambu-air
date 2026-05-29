@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from playwright.async_api import async_playwright, Page
-from playwright_stealth import stealth_async
+from playwright_stealth import Stealth
 
 from models import TikTokPost
 from config import config
@@ -160,7 +160,7 @@ async def scrape_tiktok(query: str) -> list[TikTokPost]:
         page = await context.new_page()
 
         # Stealth mode — sembunyikan tanda-tanda otomasi dari TikTok
-        await stealth_async(page)
+        await Stealth().apply_stealth_async(page)
 
         if config.tiktok_cookies_file:
             await _load_cookies(page, config.tiktok_cookies_file)
