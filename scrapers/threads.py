@@ -291,6 +291,44 @@ async def _parse_from_dom(page) -> list[ThreadsPost]:
     return posts
 
 
+async def _dismiss_popup(page, label: str = ""):
+    """Cek dan tutup popup login Threads jika ada."""
+    dismissed = False
+
+    # Coba selector tombol close yang diketahui
+    close_selectors = [
+        'div[role="dialog"] [aria-label="Close"]',
+        'div[role="dialog"] button[type="button"]',
+    ]
+    for sel in close_selectors:
+        try:
+            btn = page.locator(sel).first
+            if await btn.is_visible(timeout=1_500):
+                await btn.click()
+                dismissed = True
+                print(f"[Threads] Popup ditutup via selector ({label})")
+                await asyncio.sleep(1)
+                break
+        except Exception:
+            continue
+
+    if not dismissed:
+        # Escape sebagai fallback
+        await page.keyboard.press("Escape")
+        await asyncio.sleep(0.5)
+
+        # Cek apakah popup masih ada setelah Escape
+        try:
+            dialog = page.locator('div[role="dialog"]').first
+            if await dialog.is_visible(timeout=1_000):
+                print(f"[Threads] Popup masih ada setelah Escape ({label}), coba klik luar modal")
+                # Klik area di luar modal (pojok kiri atas konten)
+                await page.mouse.click(100, 400)
+                await asyncio.sleep(0.5)
+        except Exception:
+            pass
+
+
 async def scrape_threads(query: str) -> list[ThreadsPost]:
     posts: list[ThreadsPost] = []
     captured_graphql: list[dict] = []
@@ -335,25 +373,25 @@ async def scrape_threads(query: str) -> list[ThreadsPost]:
 
         os.makedirs("screenshots", exist_ok=True)
 
-        print(f"[Threads] Membuka {url}")
+        # Step 1: buka homepage dulu agar session/cookie terbentuk
+        print("[Threads] Membuka homepage threads.com...")
+        await page.goto("https://www.threads.com", wait_until="domcontentloaded", timeout=60_000)
+        await asyncio.sleep(3)
+        await page.screenshot(path="screenshots/threads_01_homepage.png")
+        await _dismiss_popup(page, "threads_01")
+
+        # Step 2: navigasi ke search URL
+        print(f"[Threads] Navigasi ke {url}")
         await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         await asyncio.sleep(3)
-        await page.screenshot(path="screenshots/threads_01_loaded.png")
+        await page.screenshot(path="screenshots/threads_02_search_loaded.png")
+        await _dismiss_popup(page, "threads_02")
 
-        # Dismiss login popup — tekan Escape, jangan klik karena bisa navigasi ke post
-        await page.keyboard.press("Escape")
-        await asyncio.sleep(1)
-        await page.keyboard.press("Escape")
-        await asyncio.sleep(1)
-        await page.screenshot(path="screenshots/threads_02_after_escape.png")
-
-        # Scroll untuk load lebih banyak konten, dismiss modal tiap 2 scroll
+        # Step 3: scroll untuk load lebih banyak konten
         for i in range(4):
             await page.keyboard.press("End")
             await asyncio.sleep(2)
-            if i % 2 == 1:
-                await page.keyboard.press("Escape")
-                await asyncio.sleep(0.5)
+            await _dismiss_popup(page, f"threads_scroll_{i}")
 
         await page.screenshot(path="screenshots/threads_03_after_scroll.png")
 
