@@ -74,8 +74,9 @@ jobs:
           # Browser & scraping settings
           HEADLESS: "true"
           SLOW_MO: "1000"
-          TIKTOK_MAX_RESULTS: "20"
-          THREADS_MAX_RESULTS: "20"
+          TIKTOK_MAX_RESULTS: "100"
+          THREADS_MAX_RESULTS: "100"
+          TIKTOK_SCROLL_COUNT: "8"
           API_TIMEOUT: "30"
         run: |
           PLATFORM_FLAG="${{ steps.resolve.outputs.platform }}"
