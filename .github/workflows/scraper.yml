@@ -5,11 +5,11 @@ on:
   schedule:
     - cron: "0 13 * * *"
 
-  # Manual trigger dengan pilihan platform dan query
+  # Manual trigger dengan pilihan lengkap
   workflow_dispatch:
     inputs:
       platform:
-        description: "Platform yang di-scrape"
+        description: "🌐 Platform yang di-scrape"
         required: true
         default: "tiktok threads"
         type: choice
@@ -18,14 +18,22 @@ on:
           - "tiktok"
           - "threads"
       query:
-        description: "Keyword pencarian (kosongkan untuk pakai nilai dari SEARCH_QUERY variable)"
+        description: "🔍 Keyword pencarian (kosongkan = pakai SEARCH_QUERY dari Settings)"
         required: false
         default: ""
+      max_results:
+        description: "📊 Maksimal hasil per platform (contoh: 20, 50, 100)"
+        required: false
+        default: "50"
+      scroll_count:
+        description: "🔄 Jumlah scroll TikTok — lebih banyak = lebih banyak hasil (maks 10)"
+        required: false
+        default: "6"
 
 jobs:
   scrape:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
@@ -42,11 +50,10 @@ jobs:
           pip install -r requirements.txt
           playwright install --with-deps chromium
 
-      - name: Resolve search query
+      - name: Resolve input parameters
         id: resolve
         run: |
-          # Jika input query diisi saat manual trigger, pakai itu.
-          # Jika kosong (scheduled atau manual tanpa query), pakai SEARCH_QUERY variable.
+          # Query: pakai input manual jika diisi, fallback ke variable setting
           INPUT_QUERY="${{ github.event.inputs.query }}"
           if [ -z "$INPUT_QUERY" ]; then
             FINAL_QUERY="${{ vars.SEARCH_QUERY }}"
@@ -64,47 +71,65 @@ jobs:
           fi
           echo "platform=$FINAL_PLATFORM" >> $GITHUB_OUTPUT
 
+          # Max results: pakai input jika diisi, fallback ke default CI
+          INPUT_MAX="${{ github.event.inputs.max_results }}"
+          if [ -z "$INPUT_MAX" ]; then
+            FINAL_MAX="100"
+          else
+            FINAL_MAX="$INPUT_MAX"
+          fi
+          echo "max_results=$FINAL_MAX" >> $GITHUB_OUTPUT
+
+          # Scroll count: pakai input jika diisi, fallback ke default CI
+          INPUT_SCROLL="${{ github.event.inputs.scroll_count }}"
+          if [ -z "$INPUT_SCROLL" ]; then
+            FINAL_SCROLL="8"
+          else
+            FINAL_SCROLL="$INPUT_SCROLL"
+          fi
+          echo "scroll_count=$FINAL_SCROLL" >> $GITHUB_OUTPUT
+
       - name: Restore cookies dari GitHub Secrets
         run: |
           mkdir -p cookies
 
           if [ -n "${{ secrets.TIKTOK_COOKIES_B64 }}" ]; then
             echo "${{ secrets.TIKTOK_COOKIES_B64 }}" | base64 -d > cookies/tiktok_cookies.json
-            echo "TikTok cookies restored"
+            echo "✅ TikTok cookies restored"
           else
-            echo "TIKTOK_COOKIES_B64 tidak diset, scraper jalan tanpa login TikTok"
+            echo "⚠️  TIKTOK_COOKIES_B64 tidak diset — scraper jalan tanpa login TikTok"
           fi
 
           if [ -n "${{ secrets.THREADS_COOKIES_B64 }}" ]; then
             echo "${{ secrets.THREADS_COOKIES_B64 }}" | base64 -d > cookies/threads_cookies.json
-            echo "Threads cookies restored"
+            echo "✅ Threads cookies restored"
           else
-            echo "THREADS_COOKIES_B64 tidak diset, scraper jalan tanpa login Threads"
+            echo "⚠️  THREADS_COOKIES_B64 tidak diset — scraper jalan tanpa login Threads"
           fi
 
       - name: Run scraper
         env:
-          # Dari Actions Variables (Settings > Secrets and variables > Actions > Variables)
           SEARCH_QUERY: ${{ steps.resolve.outputs.query }}
           API_URL: ${{ vars.API_URL }}
-          # Dari Actions Secrets (sensitif)
           API_KEY: ${{ secrets.API_KEY }}
-          # Cookies path (di-restore dari secrets di step sebelumnya)
           TIKTOK_COOKIES_FILE: cookies/tiktok_cookies.json
           THREADS_COOKIES_FILE: cookies/threads_cookies.json
-          # Browser & scraping settings
           HEADLESS: "true"
           SLOW_MO: "1000"
-          TIKTOK_MAX_RESULTS: "1000"
-          THREADS_MAX_RESULTS: "1000"
-          TIKTOK_SCROLL_COUNT: "8"
+          TIKTOK_MAX_RESULTS: ${{ steps.resolve.outputs.max_results }}
+          THREADS_MAX_RESULTS: ${{ steps.resolve.outputs.max_results }}
+          TIKTOK_SCROLL_COUNT: ${{ steps.resolve.outputs.scroll_count }}
           API_TIMEOUT: "30"
         run: |
           PLATFORM_FLAG="${{ steps.resolve.outputs.platform }}"
 
-          echo "Query    : $SEARCH_QUERY"
-          echo "Platform : $PLATFORM_FLAG"
-          echo "API URL  : $API_URL"
+          echo "========================================"
+          echo "Query        : $SEARCH_QUERY"
+          echo "Platform     : $PLATFORM_FLAG"
+          echo "Max Results  : $TIKTOK_MAX_RESULTS"
+          echo "Scroll Count : $TIKTOK_SCROLL_COUNT"
+          echo "API URL      : $API_URL"
+          echo "========================================"
 
           python main.py --query "$SEARCH_QUERY" --platform $PLATFORM_FLAG --save
 
