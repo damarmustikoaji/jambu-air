@@ -347,10 +347,14 @@ async def scrape_threads(query: str) -> list[ThreadsPost]:
         await asyncio.sleep(1)
         await page.screenshot(path="screenshots/threads_02_after_escape.png")
 
-        # Scroll untuk load lebih banyak konten
-        for _ in range(4):
+        # Scroll untuk load lebih banyak konten, dismiss modal tiap 2 scroll
+        for i in range(4):
             await page.keyboard.press("End")
             await asyncio.sleep(2)
+            if i % 2 == 1:
+                await page.keyboard.press("Escape")
+                await asyncio.sleep(0.5)
+
         await page.screenshot(path="screenshots/threads_03_after_scroll.png")
 
         # Parse dari GraphQL jika ada

@@ -227,16 +227,50 @@ async def scrape_tiktok(query: str) -> list[TikTokPost]:
             print("[TikTok] Input search tidak ditemukan")
             await page.screenshot(path="screenshots/tiktok_03_no_input.png")
 
-        # Step 4: tunggu hasil load
-        print("[TikTok] Menunggu hasil search...")
-        await asyncio.sleep(4)
-        await page.screenshot(path="screenshots/tiktok_04_search_results.png")
+        # Step 4: dismiss login modal jika muncul (klik X atau Escape)
+        await asyncio.sleep(2)
+        await page.keyboard.press("Escape")
+        await asyncio.sleep(1)
+
+        # Cari tombol close modal dengan berbagai selector
+        close_selectors = [
+            'button[aria-label="Close"]',
+            'button[data-e2e="modal-close-inner-button"]',
+            '[data-e2e="close-button"]',
+            'div[role="dialog"] button',
+        ]
+        for sel in close_selectors:
+            close_btn = await page.query_selector(sel)
+            if close_btn:
+                print(f"[TikTok] Menutup modal dengan selector: {sel}")
+                await close_btn.click()
+                await asyncio.sleep(1)
+                break
+
+        await page.screenshot(path="screenshots/tiktok_04_after_modal_dismiss.png")
+
+        # Step 5: tunggu konten render — lebih lama supaya skeleton selesai
+        print("[TikTok] Menunggu konten render...")
+        await asyncio.sleep(5)
+
+        # Tunggu sampai ada elemen konten atau timeout 15 detik
+        try:
+            await page.wait_for_selector(
+                '[data-e2e="search_video-item"], div[class*="DivItemContainer"], main[id="grid-main"]',
+                timeout=15_000,
+            )
+            print("[TikTok] Konten terdeteksi")
+        except Exception:
+            print("[TikTok] Timeout tunggu konten, lanjut scroll...")
+
+        await page.screenshot(path="screenshots/tiktok_05_content_wait.png")
 
         # Scroll untuk load lebih banyak & trigger API call
-        for i in range(3):
+        for i in range(4):
             await page.keyboard.press("End")
-            await asyncio.sleep(2)
-        await page.screenshot(path="screenshots/tiktok_05_after_scroll.png")
+            await asyncio.sleep(3)
+
+        await page.screenshot(path="screenshots/tiktok_06_after_scroll.png")
 
         # Ambil data
         if captured_items:
