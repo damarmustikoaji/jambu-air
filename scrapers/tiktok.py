@@ -184,11 +184,22 @@ async def scrape_tiktok(query: str) -> list[TikTokPost]:
 
         os.makedirs("screenshots", exist_ok=True)
 
-        # Step 1: langsung ke search URL (lebih reliable daripada klik navbar)
+        # Step 1: langsung ke search URL, dengan retry jika "Something went wrong"
         search_url = f"https://www.tiktok.com/search?q={query}"
         print(f"[TikTok] Membuka {search_url}")
         await page.goto(search_url, wait_until="domcontentloaded", timeout=60_000)
         await asyncio.sleep(4)
+
+        # Deteksi "Something went wrong" dan reload otomatis (maks 3x)
+        for attempt in range(3):
+            page_text = await page.inner_text("body")
+            if "Something went wrong" in page_text or "something wrong with the server" in page_text:
+                print(f"[TikTok] 'Something went wrong' terdeteksi, reload ke-{attempt + 1}...")
+                await page.reload(wait_until="domcontentloaded", timeout=60_000)
+                await asyncio.sleep(4)
+            else:
+                break
+
         await page.screenshot(path="screenshots/tiktok_01_search_loaded.png")
 
         # Step 2: dismiss login modal
