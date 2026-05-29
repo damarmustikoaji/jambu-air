@@ -165,23 +165,18 @@ async def scrape_tiktok(query: str) -> list[TikTokPost]:
         if config.tiktok_cookies_file:
             await _load_cookies(page, config.tiktok_cookies_file)
 
-        # Intercept API response untuk data mentah
+        # Intercept API response — simpan semua response ke buffer dulu
+        api_responses: list[dict] = []
+
         async def handle_response(response):
             try:
                 req_url = response.url
                 if "api/search" in req_url or ("search" in req_url and "item_list" in req_url):
                     data = await response.json()
-                    item_list = (
-                        data.get("data", [])
-                        or data.get("item_list", [])
-                        or data.get("itemList", [])
-                    )
-                    for entry in item_list:
-                        raw = entry.get("item") or entry
-                        if raw.get("id"):
-                            captured_items.append(raw)
-                    if item_list:
-                        print(f"[TikTok] Captured {len(item_list)} items dari API")
+                    api_responses.append(data)
+                    total = len(data.get("data", []) or data.get("item_list", []) or data.get("itemList", []))
+                    if total:
+                        print(f"[TikTok] API response captured: {total} items dari {req_url[:80]}")
             except Exception:
                 pass
 
@@ -189,88 +184,74 @@ async def scrape_tiktok(query: str) -> list[TikTokPost]:
 
         os.makedirs("screenshots", exist_ok=True)
 
-        # Step 1: buka homepage TikTok
-        print("[TikTok] Membuka homepage tiktok.com...")
-        await page.goto("https://www.tiktok.com", wait_until="domcontentloaded", timeout=60_000)
-        await asyncio.sleep(3)
-        await page.screenshot(path="screenshots/tiktok_01_homepage.png")
+        # Step 1: langsung ke search URL (lebih reliable daripada klik navbar)
+        search_url = f"https://www.tiktok.com/search?q={query}"
+        print(f"[TikTok] Membuka {search_url}")
+        await page.goto(search_url, wait_until="domcontentloaded", timeout=60_000)
+        await asyncio.sleep(4)
+        await page.screenshot(path="screenshots/tiktok_01_search_loaded.png")
 
-        # Step 2: klik tombol search (data-e2e="nav-search")
-        print("[TikTok] Klik tombol search...")
-        search_btn = await page.query_selector('[data-e2e="nav-search"]')
-        if search_btn:
-            await search_btn.click()
-            await asyncio.sleep(1)
-            await page.screenshot(path="screenshots/tiktok_02_search_clicked.png")
-        else:
-            await page.screenshot(path="screenshots/tiktok_02_no_search_btn.png")
-            print("[TikTok] Tombol search tidak ditemukan, coba langsung ke URL search...")
-            await page.goto(
-                f"https://www.tiktok.com/search?q={query}",
-                wait_until="domcontentloaded",
-                timeout=60_000,
-            )
-            await asyncio.sleep(3)
-            await page.screenshot(path="screenshots/tiktok_02b_direct_url.png")
-
-        # Step 3: ketik query ke input search
-        print(f"[TikTok] Mengetik query: '{query}'...")
-        search_input = await page.query_selector('[data-e2e="search-user-input"], input[type="search"], input[placeholder*="Search"]')
-        if search_input:
-            await search_input.click()
-            await asyncio.sleep(0.5)
-            for char in query:
-                await search_input.type(char, delay=80)
-            await asyncio.sleep(1)
-            await page.keyboard.press("Enter")
-        else:
-            print("[TikTok] Input search tidak ditemukan")
-            await page.screenshot(path="screenshots/tiktok_03_no_input.png")
-
-        # Step 4: dismiss login modal jika muncul (klik X atau Escape)
-        await asyncio.sleep(2)
-        await page.keyboard.press("Escape")
-        await asyncio.sleep(1)
-
-        # Cari tombol close modal dengan berbagai selector
+        # Step 2: dismiss login modal
+        # Coba selector dulu
+        closed = False
         close_selectors = [
-            'button[aria-label="Close"]',
             'button[data-e2e="modal-close-inner-button"]',
             '[data-e2e="close-button"]',
+            'button[aria-label="Close"]',
             'div[role="dialog"] button',
         ]
         for sel in close_selectors:
-            close_btn = await page.query_selector(sel)
-            if close_btn:
-                print(f"[TikTok] Menutup modal dengan selector: {sel}")
-                await close_btn.click()
+            try:
+                btn = page.locator(sel).first
+                if await btn.is_visible(timeout=2_000):
+                    await btn.click()
+                    closed = True
+                    print(f"[TikTok] Modal ditutup via selector: {sel}")
+                    await asyncio.sleep(1)
+                    break
+            except Exception:
+                continue
+
+        if not closed:
+            # Fallback: klik koordinat tombol X (posisi ~820,152 dari screenshot)
+            try:
+                await page.mouse.click(820, 152)
+                print("[TikTok] Modal ditutup via koordinat (820, 152)")
                 await asyncio.sleep(1)
-                break
+            except Exception:
+                pass
+            await page.keyboard.press("Escape")
+            await asyncio.sleep(1)
 
-        await page.screenshot(path="screenshots/tiktok_04_after_modal_dismiss.png")
+        await page.screenshot(path="screenshots/tiktok_02_after_modal_dismiss.png")
 
-        # Step 5: tunggu konten render — lebih lama supaya skeleton selesai
+        # Step 3: tunggu konten load setelah modal hilang
         print("[TikTok] Menunggu konten render...")
         await asyncio.sleep(5)
+        await page.screenshot(path="screenshots/tiktok_03_content_wait.png")
 
-        # Tunggu sampai ada elemen konten atau timeout 15 detik
-        try:
-            await page.wait_for_selector(
-                '[data-e2e="search_video-item"], div[class*="DivItemContainer"], main[id="grid-main"]',
-                timeout=15_000,
-            )
-            print("[TikTok] Konten terdeteksi")
-        except Exception:
-            print("[TikTok] Timeout tunggu konten, lanjut scroll...")
-
-        await page.screenshot(path="screenshots/tiktok_05_content_wait.png")
-
-        # Scroll untuk load lebih banyak & trigger API call
+        # Step 4: scroll untuk trigger lebih banyak API call
         for i in range(4):
             await page.keyboard.press("End")
             await asyncio.sleep(3)
 
-        await page.screenshot(path="screenshots/tiktok_06_after_scroll.png")
+        # Beri waktu semua async handler selesai
+        await asyncio.sleep(2)
+        await page.screenshot(path="screenshots/tiktok_04_after_scroll.png")
+
+        # Parse semua API responses yang tertangkap
+        for resp_data in api_responses:
+            item_list = (
+                resp_data.get("data", [])
+                or resp_data.get("item_list", [])
+                or resp_data.get("itemList", [])
+            )
+            for entry in item_list:
+                raw = entry.get("item") or entry
+                if raw.get("id"):
+                    captured_items.append(raw)
+
+        print(f"[TikTok] Total API responses: {len(api_responses)}, total items: {len(captured_items)}")
 
         # Ambil data
         if captured_items:
