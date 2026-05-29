@@ -20,6 +20,11 @@ async def send_to_api(result: ScrapeResult) -> bool:
             response = await client.post(config.api_url, json=payload, headers=headers)
             response.raise_for_status()
             print(f"[Sender] Berhasil! Status: {response.status_code}")
+            try:
+                resp_json = response.json()
+                print(f"[Sender] Response API: {json.dumps(resp_json, ensure_ascii=False)}")
+            except Exception:
+                print(f"[Sender] Response API (text): {response.text[:500]}")
             return True
     except httpx.HTTPStatusError as e:
         print(f"[Sender] HTTP error {e.response.status_code}: {e.response.text}")
