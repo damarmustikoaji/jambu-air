@@ -134,6 +134,56 @@ async def _parse_item_from_dom(item) -> TikTokPost | None:
         return None
 
 
+async def _dismiss_popups(page: Page):
+    """Tutup semua popup: login modal, captcha, TikTok Shop banner."""
+    close_selectors = [
+        # Captcha close button
+        '[data-e2e="captcha-close-button"]',
+        'div[class*="captcha"] button[aria-label*="lose"]',
+        'div[class*="captcha"] button[aria-label*="Cancel"]',
+        # Login modal
+        'button[data-e2e="modal-close-inner-button"]',
+        '[data-e2e="close-button"]',
+        'button[aria-label="Close"]',
+    ]
+
+    for _ in range(3):  # coba dismiss beberapa kali (popup bisa muncul bertahap)
+        dismissed = False
+        for sel in close_selectors:
+            try:
+                btn = page.locator(sel).first
+                if await btn.is_visible(timeout=1_500):
+                    await btn.click()
+                    dismissed = True
+                    print(f"[TikTok] Popup ditutup via: {sel}")
+                    await asyncio.sleep(1)
+                    break
+            except Exception:
+                continue
+
+        if not dismissed:
+            # Cari semua button berteks X atau close di dialog/overlay
+            try:
+                btns = await page.query_selector_all('div[role="dialog"] button, div[class*="modal"] button, div[class*="overlay"] button')
+                for btn in btns:
+                    txt = (await btn.inner_text()).strip()
+                    if txt in ("×", "✕", "✗", "X", "x", "Close", "Cancel"):
+                        await btn.click()
+                        dismissed = True
+                        print(f"[TikTok] Popup ditutup via button text '{txt}'")
+                        await asyncio.sleep(1)
+                        break
+            except Exception:
+                pass
+
+        if not dismissed:
+            break  # tidak ada popup tersisa
+
+    # Escape sebagai last resort
+    await page.keyboard.press("Escape")
+    await asyncio.sleep(0.5)
+
+
 async def scrape_tiktok(query: str) -> list[TikTokPost]:
     posts: list[TikTokPost] = []
     captured_items: list[dict] = []
@@ -202,38 +252,8 @@ async def scrape_tiktok(query: str) -> list[TikTokPost]:
 
         await page.screenshot(path="screenshots/tiktok_01_search_loaded.png")
 
-        # Step 2: dismiss login modal
-        # Coba selector dulu
-        closed = False
-        close_selectors = [
-            'button[data-e2e="modal-close-inner-button"]',
-            '[data-e2e="close-button"]',
-            'button[aria-label="Close"]',
-            'div[role="dialog"] button',
-        ]
-        for sel in close_selectors:
-            try:
-                btn = page.locator(sel).first
-                if await btn.is_visible(timeout=2_000):
-                    await btn.click()
-                    closed = True
-                    print(f"[TikTok] Modal ditutup via selector: {sel}")
-                    await asyncio.sleep(1)
-                    break
-            except Exception:
-                continue
-
-        if not closed:
-            # Fallback: klik koordinat tombol X (posisi ~820,152 dari screenshot)
-            try:
-                await page.mouse.click(820, 152)
-                print("[TikTok] Modal ditutup via koordinat (820, 152)")
-                await asyncio.sleep(1)
-            except Exception:
-                pass
-            await page.keyboard.press("Escape")
-            await asyncio.sleep(1)
-
+        # Step 2: dismiss semua modal/popup (login modal + captcha)
+        await _dismiss_popups(page)
         await page.screenshot(path="screenshots/tiktok_02_after_modal_dismiss.png")
 
         # Step 3: tunggu konten load setelah modal hilang
@@ -245,6 +265,8 @@ async def scrape_tiktok(query: str) -> list[TikTokPost]:
         for i in range(4):
             await page.keyboard.press("End")
             await asyncio.sleep(3)
+            # Dismiss popup/captcha yang mungkin muncul saat scroll
+            await _dismiss_popups(page)
 
         # Beri waktu semua async handler selesai
         await asyncio.sleep(2)
