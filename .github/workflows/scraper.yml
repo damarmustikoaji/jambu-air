@@ -1,0 +1,108 @@
+name: Social Media Scraper
+
+on:
+  # Scheduled: setiap hari jam 20:00 WIB (13:00 UTC)
+  schedule:
+    - cron: "0 13 * * *"
+
+  # Manual trigger dengan pilihan platform dan query
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Platform yang di-scrape"
+        required: true
+        default: "tiktok threads"
+        type: choice
+        options:
+          - "tiktok threads"
+          - "tiktok"
+          - "threads"
+      query:
+        description: "Keyword pencarian (kosongkan untuk pakai nilai dari SEARCH_QUERY variable)"
+        required: false
+        default: ""
+      save_output:
+        description: "Simpan hasil ke artifact?"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Resolve search query
+        id: resolve
+        run: |
+          # Jika input query diisi saat manual trigger, pakai itu.
+          # Jika kosong (scheduled atau manual tanpa query), pakai SEARCH_QUERY variable.
+          INPUT_QUERY="${{ github.event.inputs.query }}"
+          if [ -z "$INPUT_QUERY" ]; then
+            FINAL_QUERY="${{ vars.SEARCH_QUERY }}"
+          else
+            FINAL_QUERY="$INPUT_QUERY"
+          fi
+          echo "query=$FINAL_QUERY" >> $GITHUB_OUTPUT
+
+          # Platform: default keduanya saat scheduled
+          INPUT_PLATFORM="${{ github.event.inputs.platform }}"
+          if [ -z "$INPUT_PLATFORM" ]; then
+            FINAL_PLATFORM="tiktok threads"
+          else
+            FINAL_PLATFORM="$INPUT_PLATFORM"
+          fi
+          echo "platform=$FINAL_PLATFORM" >> $GITHUB_OUTPUT
+
+      - name: Run scraper
+        env:
+          # Dari Actions Variables (Settings > Secrets and variables > Actions > Variables)
+          SEARCH_QUERY: ${{ steps.resolve.outputs.query }}
+          API_URL: ${{ vars.API_URL }}
+          # Dari Actions Secrets (sensitif)
+          API_KEY: ${{ secrets.API_KEY }}
+          # Browser & scraping settings
+          HEADLESS: "true"
+          SLOW_MO: "1000"
+          TIKTOK_MAX_RESULTS: "20"
+          THREADS_MAX_RESULTS: "20"
+          API_TIMEOUT: "30"
+        run: |
+          PLATFORM_FLAG="${{ steps.resolve.outputs.platform }}"
+          SAVE_FLAG=""
+          if [ "${{ github.event.inputs.save_output }}" = "true" ]; then
+            SAVE_FLAG="--save"
+          fi
+
+          echo "Query    : $SEARCH_QUERY"
+          echo "Platform : $PLATFORM_FLAG"
+          echo "API URL  : $API_URL"
+
+          python main.py --query "$SEARCH_QUERY" --platform $PLATFORM_FLAG $SAVE_FLAG
+
+      - name: Upload output artifact
+        if: ${{ github.event.inputs.save_output == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrape-result-${{ github.run_id }}
+          path: output_*.json
+          retention-days: 7
