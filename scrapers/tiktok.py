@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import asyncio
 from datetime import datetime, timezone
@@ -186,10 +187,13 @@ async def scrape_tiktok(query: str) -> list[TikTokPost]:
 
         page.on("response", handle_response)
 
+        os.makedirs("screenshots", exist_ok=True)
+
         # Step 1: buka homepage TikTok
         print("[TikTok] Membuka homepage tiktok.com...")
         await page.goto("https://www.tiktok.com", wait_until="domcontentloaded", timeout=60_000)
         await asyncio.sleep(3)
+        await page.screenshot(path="screenshots/tiktok_01_homepage.png")
 
         # Step 2: klik tombol search (data-e2e="nav-search")
         print("[TikTok] Klik tombol search...")
@@ -197,13 +201,17 @@ async def scrape_tiktok(query: str) -> list[TikTokPost]:
         if search_btn:
             await search_btn.click()
             await asyncio.sleep(1)
+            await page.screenshot(path="screenshots/tiktok_02_search_clicked.png")
         else:
+            await page.screenshot(path="screenshots/tiktok_02_no_search_btn.png")
             print("[TikTok] Tombol search tidak ditemukan, coba langsung ke URL search...")
             await page.goto(
                 f"https://www.tiktok.com/search?q={query}",
                 wait_until="domcontentloaded",
                 timeout=60_000,
             )
+            await asyncio.sleep(3)
+            await page.screenshot(path="screenshots/tiktok_02b_direct_url.png")
 
         # Step 3: ketik query ke input search
         print(f"[TikTok] Mengetik query: '{query}'...")
@@ -211,22 +219,24 @@ async def scrape_tiktok(query: str) -> list[TikTokPost]:
         if search_input:
             await search_input.click()
             await asyncio.sleep(0.5)
-            # Ketik pelan-pelan supaya lebih natural
             for char in query:
                 await search_input.type(char, delay=80)
             await asyncio.sleep(1)
             await page.keyboard.press("Enter")
         else:
             print("[TikTok] Input search tidak ditemukan")
+            await page.screenshot(path="screenshots/tiktok_03_no_input.png")
 
         # Step 4: tunggu hasil load
         print("[TikTok] Menunggu hasil search...")
         await asyncio.sleep(4)
+        await page.screenshot(path="screenshots/tiktok_04_search_results.png")
 
         # Scroll untuk load lebih banyak & trigger API call
-        for _ in range(3):
+        for i in range(3):
             await page.keyboard.press("End")
             await asyncio.sleep(2)
+        await page.screenshot(path="screenshots/tiktok_05_after_scroll.png")
 
         # Ambil data
         if captured_items:

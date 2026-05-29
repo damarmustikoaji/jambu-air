@@ -21,14 +21,6 @@ on:
         description: "Keyword pencarian (kosongkan untuk pakai nilai dari SEARCH_QUERY variable)"
         required: false
         default: ""
-      save_output:
-        description: "Simpan hasil ke artifact?"
-        required: false
-        default: "false"
-        type: choice
-        options:
-          - "false"
-          - "true"
 
 jobs:
   scrape:
@@ -87,21 +79,19 @@ jobs:
           API_TIMEOUT: "30"
         run: |
           PLATFORM_FLAG="${{ steps.resolve.outputs.platform }}"
-          SAVE_FLAG=""
-          if [ "${{ github.event.inputs.save_output }}" = "true" ]; then
-            SAVE_FLAG="--save"
-          fi
 
           echo "Query    : $SEARCH_QUERY"
           echo "Platform : $PLATFORM_FLAG"
           echo "API URL  : $API_URL"
 
-          python main.py --query "$SEARCH_QUERY" --platform $PLATFORM_FLAG $SAVE_FLAG
+          python main.py --query "$SEARCH_QUERY" --platform $PLATFORM_FLAG --save
 
-      - name: Upload output artifact
-        if: ${{ github.event.inputs.save_output == 'true' }}
+      - name: Upload artifact (hasil scraping + screenshot debug)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: scrape-result-${{ github.run_id }}
-          path: output_*.json
+          path: |
+            output_*.json
+            screenshots/
           retention-days: 7

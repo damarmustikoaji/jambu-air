@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import asyncio
 from datetime import datetime
@@ -332,20 +333,25 @@ async def scrape_threads(query: str) -> list[ThreadsPost]:
 
         page.on("response", handle_response)
 
+        os.makedirs("screenshots", exist_ok=True)
+
         print(f"[Threads] Membuka {url}")
         await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         await asyncio.sleep(3)
+        await page.screenshot(path="screenshots/threads_01_loaded.png")
 
         # Dismiss login popup — tekan Escape, jangan klik karena bisa navigasi ke post
         await page.keyboard.press("Escape")
         await asyncio.sleep(1)
         await page.keyboard.press("Escape")
         await asyncio.sleep(1)
+        await page.screenshot(path="screenshots/threads_02_after_escape.png")
 
         # Scroll untuk load lebih banyak konten
         for _ in range(4):
             await page.keyboard.press("End")
             await asyncio.sleep(2)
+        await page.screenshot(path="screenshots/threads_03_after_scroll.png")
 
         # Parse dari GraphQL jika ada
         all_gql_posts = []
