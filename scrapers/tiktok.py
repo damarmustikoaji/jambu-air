@@ -234,9 +234,15 @@ async def scrape_tiktok(query: str) -> list[TikTokPost]:
 
         os.makedirs("screenshots", exist_ok=True)
 
-        # Step 1: langsung ke search URL, dengan retry jika "Something went wrong"
+        # Step 1: buka homepage dulu agar cookie/session terbentuk
+        print("[TikTok] Membuka homepage tiktok.com...")
+        await page.goto("https://www.tiktok.com", wait_until="domcontentloaded", timeout=60_000)
+        await asyncio.sleep(3)
+        await page.screenshot(path="screenshots/tiktok_01_homepage.png")
+
+        # Step 2: navigasi ke search URL (tab Top/general)
         search_url = f"https://www.tiktok.com/search?q={query}"
-        print(f"[TikTok] Membuka {search_url}")
+        print(f"[TikTok] Navigasi ke {search_url}")
         await page.goto(search_url, wait_until="domcontentloaded", timeout=60_000)
         await asyncio.sleep(4)
 
@@ -244,35 +250,53 @@ async def scrape_tiktok(query: str) -> list[TikTokPost]:
         for attempt in range(3):
             page_text = await page.inner_text("body")
             if "Something went wrong" in page_text or "something wrong with the server" in page_text:
-                print(f"[TikTok] 'Something went wrong' terdeteksi, reload ke-{attempt + 1}...")
+                print(f"[TikTok] 'Something went wrong', reload ke-{attempt + 1}...")
                 await page.reload(wait_until="domcontentloaded", timeout=60_000)
                 await asyncio.sleep(4)
             else:
+                print("[TikTok] Halaman search berhasil dimuat")
                 break
 
-        await page.screenshot(path="screenshots/tiktok_01_search_loaded.png")
+        await page.screenshot(path="screenshots/tiktok_02_search_loaded.png")
 
-        # Step 2: dismiss semua modal/popup (login modal + captcha)
+        # Dismiss popup awal
         await _dismiss_popups(page)
-        await page.screenshot(path="screenshots/tiktok_02_after_modal_dismiss.png")
+        await page.screenshot(path="screenshots/tiktok_03_after_dismiss.png")
 
-        # Step 3: tunggu konten load setelah modal hilang
+        # Tunggu konten render pertama kali
         print("[TikTok] Menunggu konten render...")
         await asyncio.sleep(5)
-        await page.screenshot(path="screenshots/tiktok_03_content_wait.png")
 
-        # Step 4: scroll untuk trigger lebih banyak API call
-        for i in range(4):
-            await page.keyboard.press("End")
-            await asyncio.sleep(3)
-            # Dismiss popup/captcha yang mungkin muncul saat scroll
+        # Step 3: scroll perlahan — tiap scroll memuat batch baru dari API
+        # Cek popup setiap scroll karena bisa muncul kapan saja
+        scroll_count = config.tiktok_scroll_count
+        print(f"[TikTok] Mulai scroll ({scroll_count}x), cek popup setiap langkah...")
+        for i in range(scroll_count):
+            # Geser mouse ke tengah halaman dulu agar wheel event ter-trigger
+            await page.mouse.move(640, 400)
+            # Scroll dengan mouse wheel — lebih natural dan efektif untuk TikTok
+            await page.mouse.wheel(0, 800)
+            await asyncio.sleep(1)
+            await page.mouse.wheel(0, 800)
+            await asyncio.sleep(2)
+
+            # Cek dan close popup yang muncul
             await _dismiss_popups(page)
 
-        # Beri waktu semua async handler selesai
+            # Setiap 2 scroll ambil screenshot dan log progress
+            if (i + 1) % 2 == 0:
+                total_so_far = sum(
+                    len(r.get("data") or r.get("item_list") or r.get("itemList") or [])
+                    for r in api_responses
+                )
+                print(f"[TikTok] Scroll ke-{i+1}/{scroll_count}, total API items: {total_so_far}")
+                await page.screenshot(path=f"screenshots/tiktok_scroll_{i+1}.png")
+
         await asyncio.sleep(2)
         await page.screenshot(path="screenshots/tiktok_04_after_scroll.png")
 
-        # Parse semua API responses yang tertangkap
+        # Parse semua API responses, deduplikasi by post_id
+        seen_ids: set = set()
         for resp_data in api_responses:
             item_list = (
                 resp_data.get("data", [])
@@ -281,20 +305,22 @@ async def scrape_tiktok(query: str) -> list[TikTokPost]:
             )
             for entry in item_list:
                 raw = entry.get("item") or entry
-                if raw.get("id"):
+                pid = raw.get("id")
+                if pid and pid not in seen_ids:
+                    seen_ids.add(pid)
                     captured_items.append(raw)
 
-        print(f"[TikTok] Total API responses: {len(api_responses)}, total items: {len(captured_items)}")
+        print(f"[TikTok] Total API responses: {len(api_responses)}, unique items: {len(captured_items)}")
 
         # Ambil data
         if captured_items:
-            print(f"[TikTok] Total dari API: {len(captured_items)}, memproses maks {config.tiktok_max_results}...")
+            print(f"[TikTok] Memproses {len(captured_items)} items, maks {config.tiktok_max_results}...")
             for item in captured_items[: config.tiktok_max_results]:
                 post = _parse_item_from_api(item)
                 if post:
                     posts.append(post)
         else:
-            # Fallback ke DOM parsing
+            # Fallback ke DOM parsing (tab terakhir yang aktif)
             print("[TikTok] API intercept kosong, mencoba parse DOM...")
             grid_items = await page.query_selector_all(
                 'div[class*="SearchGridLayoutContainer"] > div, '

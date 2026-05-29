@@ -15,6 +15,7 @@ class Config:
     # Scraping limits
     tiktok_max_results: int = int(os.getenv("TIKTOK_MAX_RESULTS", "20"))
     threads_max_results: int = int(os.getenv("THREADS_MAX_RESULTS", "20"))
+    tiktok_scroll_count: int = int(os.getenv("TIKTOK_SCROLL_COUNT", "6"))
 
     # Browser
     headless: bool = os.getenv("HEADLESS", "true").lower() == "true"

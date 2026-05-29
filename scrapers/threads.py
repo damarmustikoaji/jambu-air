@@ -142,10 +142,28 @@ async def _parse_from_dom(page) -> list[ThreadsPost]:
         const results = [];
         const seen = new Set();
 
-        // Gunakan data-pagelet sebagai container per post — selector paling stabil
-        const pagelets = document.querySelectorAll('[data-pagelet^="threads_search_results_"]');
+        // Cari container post: utama pakai data-pagelet, fallback ke semua link /post/
+        let containers = Array.from(document.querySelectorAll('[data-pagelet^="threads_search_results_"]'));
 
-        for (const pagelet of pagelets) {
+        // Fallback: jika data-pagelet tidak cukup, kumpulkan semua post link dan naik ke container
+        if (containers.length < 3) {
+            const allPostLinks = document.querySelectorAll('a[href*="/post/"]');
+            const containerSet = new Set();
+            for (const link of allPostLinks) {
+                let node = link;
+                for (let i = 0; i < 15; i++) {
+                    node = node.parentElement;
+                    if (!node) break;
+                    if (node.querySelector('time')) {
+                        containerSet.add(node);
+                        break;
+                    }
+                }
+            }
+            containers = Array.from(containerSet);
+        }
+
+        for (const pagelet of containers) {
             try {
                 // Post link untuk post_id dan username
                 const postLink = pagelet.querySelector('a[href*="/post/"]');
@@ -359,8 +377,12 @@ async def scrape_threads(query: str) -> list[ThreadsPost]:
         if config.threads_cookies_file:
             await _load_cookies(page, config.threads_cookies_file)
 
-        # Intercept GraphQL response
+        # Flag: mulai capture GraphQL hanya setelah berada di halaman search
+        capture_active = False
+
         async def handle_response(response):
+            if not capture_active:
+                return
             try:
                 req_url = response.url
                 if "graphql" in req_url or "api/graphql" in req_url:
@@ -373,27 +395,62 @@ async def scrape_threads(query: str) -> list[ThreadsPost]:
 
         os.makedirs("screenshots", exist_ok=True)
 
-        # Step 1: buka homepage dulu agar session/cookie terbentuk
+        # Step 1: buka homepage (untuk bangun session, tidak capture GraphQL)
         print("[Threads] Membuka homepage threads.com...")
         await page.goto("https://www.threads.com", wait_until="domcontentloaded", timeout=60_000)
         await asyncio.sleep(3)
         await page.screenshot(path="screenshots/threads_01_homepage.png")
         await _dismiss_popup(page, "threads_01")
 
-        # Step 2: navigasi ke search URL
-        print(f"[Threads] Navigasi ke {url}")
-        await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-        await asyncio.sleep(3)
-        await page.screenshot(path="screenshots/threads_02_search_loaded.png")
+        # Step 2: navigasi ke halaman search (tanpa query dulu)
+        print("[Threads] Membuka halaman search...")
+        await page.goto("https://www.threads.com/search", wait_until="domcontentloaded", timeout=60_000)
+        await asyncio.sleep(2)
+        await page.screenshot(path="screenshots/threads_02_search_page.png")
         await _dismiss_popup(page, "threads_02")
 
-        # Step 3: scroll untuk load lebih banyak konten
-        for i in range(4):
+        # Step 3: ketik query di input search dan Enter
+        print(f"[Threads] Mengetik query: '{query}'...")
+        search_input = await page.query_selector('input[type="search"], input[placeholder="Search"]')
+        if search_input:
+            await search_input.click()
+            await asyncio.sleep(0.5)
+            for char in query:
+                await search_input.type(char, delay=60)
+            await asyncio.sleep(1)
+            await page.screenshot(path="screenshots/threads_03_typed_query.png")
+            # Aktifkan capture GraphQL tepat sebelum Enter — hasil search mulai dari sini
+            capture_active = True
+            await page.keyboard.press("Enter")
+            await asyncio.sleep(4)
+        else:
+            print("[Threads] Input search tidak ditemukan, fallback ke direct URL...")
+            capture_active = True
+            await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+            await asyncio.sleep(4)
+
+        await page.screenshot(path="screenshots/threads_04_results_loaded.png")
+        await _dismiss_popup(page, "threads_04")
+
+        # Step 4: scroll untuk load lebih banyak konten
+        for i in range(8):
             await page.keyboard.press("End")
             await asyncio.sleep(2)
             await _dismiss_popup(page, f"threads_scroll_{i}")
 
-        await page.screenshot(path="screenshots/threads_03_after_scroll.png")
+        await page.screenshot(path="screenshots/threads_05_after_scroll.png")
+
+        # Log berapa pagelet yang ditemukan sebelum parse
+        pagelet_count = await page.evaluate("""() => {
+            const byPagelet = document.querySelectorAll('[data-pagelet^="threads_search_results_"]').length;
+            const byPostLink = new Set(
+                Array.from(document.querySelectorAll('a[href*="/post/"]'))
+                    .map(a => a.getAttribute('href').match(/\\/post\\/([A-Za-z0-9_-]+)/)?.[1])
+                    .filter(Boolean)
+            ).size;
+            return { byPagelet, byPostLink };
+        }""")
+        print(f"[Threads] Pagelet ditemukan: {pagelet_count['byPagelet']}, unique post links: {pagelet_count['byPostLink']}")
 
         # Parse dari GraphQL jika ada
         all_gql_posts = []
