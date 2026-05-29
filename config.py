@@ -21,9 +21,15 @@ class Config:
     headless: bool = os.getenv("HEADLESS", "true").lower() == "true"
     slow_mo: int = int(os.getenv("SLOW_MO", "500"))  # ms delay antar aksi browser
 
-    # Credentials (opsional, untuk platform yang butuh login)
-    tiktok_cookies_file: str = os.getenv("TIKTOK_COOKIES_FILE", "")
-    threads_cookies_file: str = os.getenv("THREADS_COOKIES_FILE", "")
+    # Cookies file (hasil dari login.py)
+    tiktok_cookies_file: str = os.getenv("TIKTOK_COOKIES_FILE", "cookies/tiktok_cookies.json")
+    threads_cookies_file: str = os.getenv("THREADS_COOKIES_FILE", "cookies/threads_cookies.json")
+
+    # Login credentials (untuk script login.py — tidak dipakai langsung oleh scraper)
+    tiktok_username: str = os.getenv("TIKTOK_USERNAME", "")
+    tiktok_password: str = os.getenv("TIKTOK_PASSWORD", "")
+    threads_username: str = os.getenv("THREADS_USERNAME", "")
+    threads_password: str = os.getenv("THREADS_PASSWORD", "")
 
     # API destination
     api_url: str = os.getenv("API_URL", "")

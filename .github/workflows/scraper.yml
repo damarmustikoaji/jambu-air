@@ -64,6 +64,24 @@ jobs:
           fi
           echo "platform=$FINAL_PLATFORM" >> $GITHUB_OUTPUT
 
+      - name: Restore cookies dari GitHub Secrets
+        run: |
+          mkdir -p cookies
+
+          if [ -n "${{ secrets.TIKTOK_COOKIES_B64 }}" ]; then
+            echo "${{ secrets.TIKTOK_COOKIES_B64 }}" | base64 -d > cookies/tiktok_cookies.json
+            echo "TikTok cookies restored"
+          else
+            echo "TIKTOK_COOKIES_B64 tidak diset, scraper jalan tanpa login TikTok"
+          fi
+
+          if [ -n "${{ secrets.THREADS_COOKIES_B64 }}" ]; then
+            echo "${{ secrets.THREADS_COOKIES_B64 }}" | base64 -d > cookies/threads_cookies.json
+            echo "Threads cookies restored"
+          else
+            echo "THREADS_COOKIES_B64 tidak diset, scraper jalan tanpa login Threads"
+          fi
+
       - name: Run scraper
         env:
           # Dari Actions Variables (Settings > Secrets and variables > Actions > Variables)
@@ -71,11 +89,14 @@ jobs:
           API_URL: ${{ vars.API_URL }}
           # Dari Actions Secrets (sensitif)
           API_KEY: ${{ secrets.API_KEY }}
+          # Cookies path (di-restore dari secrets di step sebelumnya)
+          TIKTOK_COOKIES_FILE: cookies/tiktok_cookies.json
+          THREADS_COOKIES_FILE: cookies/threads_cookies.json
           # Browser & scraping settings
           HEADLESS: "true"
           SLOW_MO: "1000"
-          TIKTOK_MAX_RESULTS: "100"
-          THREADS_MAX_RESULTS: "100"
+          TIKTOK_MAX_RESULTS: "1000"
+          THREADS_MAX_RESULTS: "1000"
           TIKTOK_SCROLL_COUNT: "8"
           API_TIMEOUT: "30"
         run: |
